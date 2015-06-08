@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 
+# required for control
+shopt -s extglob
+
 ## defaults
 CONFIG=/etc/pulpd.conf
 DROOT=/var/lib/pulpd/data
@@ -13,7 +16,6 @@ IMAGE_HTTPD=pulp/apache
 IMAGE_CRANE=pulp/crane-allinone
 
 CONTAINER_NAME_PREFIX="pulpd-"
-
 PULP_LOG_DIR=/var/log/pulp
 PULP_WORKERS=2
 PULP_HOSTNAME=pulpapi
@@ -60,6 +62,49 @@ function prepare_environment() {
     done
 }
 
+function show_envrionment() {
+    cat << EOF
+
+###################
+pulpd: environment
+###################
+
+CONFIG: ${CONFIG}
+DROOT: ${DROOT}
+CID: ${CID}
+
+-----------
+pulp config
+-----------
+PULP_LOG_DIR: ${PULP_LOG_DIR}
+PULP_WORKERS: ${PULP_WORKERS}
+PULP_HOSTNAME: ${PULP_HOSTNAME}
+PULP_DB_PORT: ${PULP_DB_PORT}
+PULP_QPID_PORT: ${PULP_QPID_PORT}
+PULP_HTTP_PORT: ${PULP_HTTP_PORT}
+PULP_HTTPS_PORT: ${PULP_HTTPS_PORT}
+PULP_CRANE_HTTP_PORT: ${PULP_CRANE_HTTP_PORT}
+
+-------------
+docker images
+-------------
+BASE: ${IMAGE_BASE}
+WORKER: ${IMAGE_WORKER}
+QPID: ${IMAGE_QPID}
+DB: ${IMAGE_DB}
+HTTPD: ${IMAGE_HTTPD}
+CRANE: ${IMAGE_CRANE}
+
+---------------------
+docker runtime config
+---------------------
+CONTAINER_NAME_PREFIX: ${CONTAINER_NAME_PREFIX}
+MOUNTS: ${MOUNTS}
+LINKS: ${LINKS}
+
+EOF
+}
+
 function docker_run() {
     NAME=${CONTAINER_NAME_PREFIX}$1
     shift
@@ -84,24 +129,79 @@ function docker_stop() {
         && echo "Removed name ${NAME}"
 }
 
-function start-db() {
-    # run as normal but remove from CID
-    docker_run db  -p ${PULP_DB_PORT}:27017 ${IMAGE_DB} \
-        && sed -i /"${CONTAINER_NAME_PREFIX}db"/d ${CID}
+function control_workers() {
+    COUNTER=1
+    while [  ${COUNTER} -le ${PULP_WORKERS} ]; do
+        control $1 worker${COUNTER}
+        let COUNTER=COUNTER+1
+    done 
 }
 
-function stop-db() {
-    docker_stop ${CONTAINER_NAME_PREFIX}db
-}
-
-function start-qpid() {
-    # run as normal but remove from CID
-    docker_run qpid -p ${PULP_QPID_PORT}:5672 ${IMAGE_QPID} \
-        && sed -i /"${CONTAINER_NAME_PREFIX}qpid"/d ${CID}
-}
-
-function stop-qpid() {
-    docker_stop ${CONTAINER_NAME_PREFIX}qpid
+function control() {
+    case "$1" in
+        start)
+            case "$2" in
+                db)
+                    docker_run db  -p ${PULP_DB_PORT}:27017 ${IMAGE_DB} \
+                        && sed -i /"${CONTAINER_NAME_PREFIX}db"/d ${CID} ;;
+                qpid)
+                    docker_run qpid -p ${PULP_QPID_PORT}:5672 ${IMAGE_QPID} \
+                        && sed -i /"${CONTAINER_NAME_PREFIX}qpid"/d ${CID} ;;
+                beat|resource_manager)
+                    docker_run $2 $MOUNTS $LINKS ${IMAGE_WORKER} $2 ;;
+                worker+([0-9]))
+                    docker_run $2 $MOUNTS $LINKS ${IMAGE_WORKER} worker ${2/worker/} ;;
+                workers)
+                    control_workers start ;;
+                pulpapi)
+                    docker_run pulpapi \
+                        ${MOUNTS} \
+                        -v ${DROOT}/${PULP_LOG_DIR}/httpd-pulpapi:/var/log/httpd \
+                        ${LINKS} \
+                        --hostname ${PULP_HOSTNAME} \
+                        -p ${PULP_HTTPS_PORT}:443 -p ${PULP_HTTP_PORT}:80 \
+                        ${IMAGE_HTTPD} ;;
+                crane)
+                    docker_run crane \
+                        ${MOUNTS} \
+                        -v ${DROOT}/${PULP_LOG_DIR}/httpd-crane:/var/log/httpd \
+                        -p ${PULP_CRANE_HTTP_PORT}:80 ${IMAGE_CRANE} ;;
+                all)
+                    start ;;
+                "")
+                    echo 1>&2 "control start requires an argument"; exit 1 ;;
+                *)
+                    echo 1>&2 "unknown argument to control start"; exit 1 ;;
+            esac ;;
+        stop)
+            case "$2" in
+                workers)
+                    control_workers start ;;
+                all)
+                    stop
+                    for container in qpid db; do
+                        control stop ${container}
+                    done ;;
+                "")
+                    echo 1>&2 "control stop requires an argument"; exit 1 ;;
+                *)
+                    docker_stop ${CONTAINER_NAME_PREFIX}$2 ;;
+            esac ;;
+        status)
+            case "$2" in
+                workers)
+                    control_workers status ;;
+                all)
+                    status ;;
+                *)
+                    docker ps | grep ${CONTAINER_NAME_PREFIX}$2 ;;
+            esac ;;
+        pull)
+            for image in ${IMAGE_BASE} ${IMAGE_WORKER} ${IMAGE_DB} \
+                ${IMAGE_QPID} ${IMAGE_CRANE} ${IMAGE_HTTPD}; do
+                docker pull ${image}
+            done ;;
+    esac
 }
 
 function start() {
@@ -109,31 +209,18 @@ function start() {
         echo 1>&2 "Cannot start server before setup is complete."
         exit 1
     fi
-    
+ 
+    # stop any running containers
     stop
     
-    start-db
-    start-qpid
-
-    docker_run beat $MOUNTS $LINKS ${IMAGE_WORKER} beat
-    docker_run resource_manager $MOUNTS $LINKS ${IMAGE_WORKER} resource_manager
-
-    # workers
-    COUNTER=1
-    while [  ${COUNTER} -le ${PULP_WORKERS} ]; do
-        docker_run worker${COUNTER} $MOUNTS $LINKS ${IMAGE_WORKER} worker ${COUNTER}
-        let COUNTER=COUNTER+1
-    done
-    
-    docker_run pulpapi \
-        ${MOUNTS} -v ${DROOT}/${PULP_LOG_DIR}/httpd-pulpapi:/var/log/httpd \
-        ${LINKS} \
-        --hostname ${PULP_HOSTNAME} \
-        -p ${PULP_HTTPS_PORT}:443 -p ${PULP_HTTP_PORT}:80 ${IMAGE_HTTPD}
-
-    docker_run crane \
-        ${MOUNTS} -v ${DROOT}/${PULP_LOG_DIR}/httpd-crane:/var/log/httpd \
-        -p ${PULP_CRANE_HTTP_PORT}:80 ${IMAGE_CRANE}
+    # start all containers
+    control start db
+    control start qpid
+    control start beat
+    control start resource_manager
+    control start workers
+    control start pulpapi
+    control start crane
 }
 
 function stop() {
@@ -150,8 +237,10 @@ function status() {
 }
 
 function setup() {
-    start-db
-    start-qpid
+    # start db and qpid if not already running
+    control start db
+    control start qpid
+    
     docker run -it --rm $LINKS $MOUNTS \
         --hostname ${PULP_HOSTNAME} \
         ${IMAGE_BASE} bash -c /setup.sh
@@ -176,11 +265,25 @@ Commands:
  stop       Stop all containers except database and qpid
  restart    Same as executing stop followed by start
  status     Show docker ps for pulp containers
- start-db   Start database container
- stop-db    Stop database container
- start-qpid Start qpid container
- stop-qpid  Stop qpid container
+ <cmd>-<cn> Run command (start|stop|status) for container; where cn is the container name
  shutdown   Stop everything
+ show       Show pulpd environment
+ control    Internal control command for advanced usage
+ pull       Pull all imaged (triggers an update for any out dated images)
+
+Container names:
+db, qpid, beat, resource_manager, worker<id>, pulpapi, crane
+
+The control command usage:
+
+ control start <container>
+ control stop <container>
+ control status <container>
+
+ If 'workers' is used all running workers will be affected. For specific worker,
+ use 'worker<id>'.
+
+ To affect all containers; use 'all'.
 
 EOF
 }
@@ -198,7 +301,7 @@ while true ; do
         -d|--droot)
             case "$2" in
                 "") shift 2 ;;
-                *) DROOT=$2 ; shift 2 ;;
+                *) DROOT_OVERRRID=$2 ; shift 2 ;;
             esac ;;
         -h|--help) usage && exit 0 ;;
         --) shift ; break ;;
@@ -207,53 +310,56 @@ while true ; do
 done
 
 if [ $# -ne 1 ]; then
-    echo "Single command expected; $# commands were provided."
-    usage && exit 1
+    # exception for control command
+    if [ "$1" == "control" ] && [ $# -ne 3 ] ; then
+        echo "control command expects 2 arguments; $(expr $# - 1) were given."
+        exit 1
+    elif [ "$1" != "control" ]; then
+        echo "Single command expected; $# commands were provided."
+        exit 1
+    fi
 fi
-
 
 ## configuration
 if [ -f ${CONFIG} ]; then
-    echo "Sourcing environment from ${CONFIG}"
     source ${CONFIG}
+fi
+
+# cli option overrides config
+if [ ! -z "${DROOT_OVERRRID}" ]; then
+    DROOT=${DROOT_OVERRRID}
 fi
 
 DROOT=${DROOT/%\//}
 
 prepare_environment
 
-## command procession
+## command processing
 case "$1" in
     setup)
-        setup
-        ;;
+        setup ;;
     start)
-        start
-        ;;
-    start-db)
-        start-db
-        ;;
-    start-qpid)
-        start-qpid
-        ;;
+        start ;;
+    start-+([a-z]|[0-9]))
+        control start ${1/start-/} ;;
     stop)
-        stop
-        ;;
-    stop-db)
-        stop-db
-        ;;
-    stop-qpid)
-        stop-qpid
-        ;;
+        stop ;;
+    stop-+([a-z]|[0-9]))
+        control stop ${1/stop-/} ;;
     shutdown)
-        stop; stop-db; stop-qpid;
-        ;;
+        control stop all ;;
     restart)
-        stop && start
-        ;;
+        stop && start ;;
     status)
-        status
-        ;;
+        status ;;
+    status-+([a-z]|[0-9]))
+        control status ${1/status-/} ;;
+    show)
+        show_envrionment ;;
+    control)
+        control $2 $3 ;;
+    pull)
+        control pull ;;
     *)
         echo "Invalid command specified.";
         usage && exit 1
