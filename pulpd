@@ -36,7 +36,6 @@ function ensure_dir {
         echo creating $DROOT$1
         mkdir -p $DROOT$1
     fi
-    chcon -Rt svirt_sandbox_file_t $DROOT$1
 }
 
 function prepare_environment() {
@@ -243,7 +242,7 @@ function setup() {
     control start db
     control start qpid
     
-    docker run -it --rm $LINKS $MOUNTS \
+    docker run --security-opt label:level:s0 -it --rm $LINKS $MOUNTS \
         --hostname ${PULP_HOSTNAME} \
         ${IMAGE_BASE} bash -c /setup.sh
 }
