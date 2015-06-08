@@ -36,7 +36,7 @@ function ensure_dir {
         echo creating $DROOT$1
         mkdir -p $DROOT$1
     fi
-    chcon -Rvt svirt_sandbox_file_t $DROOT$1
+    chcon -Rt svirt_sandbox_file_t $DROOT$1
 }
 
 function prepare_environment() {
