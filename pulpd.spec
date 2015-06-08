@@ -9,7 +9,8 @@ Summary:	Pulp'd - Pulp in a box
 
 License:	GPLv2
 URL:		https://github.com/abn/pulpd
-Source0:	https://github.com/abn/pulpd/archive/v%{version}/%{name}-%{version}.tar.gz
+Source0:    pulpd
+Source1:    pulpd.conf
 
 Requires:	bash, docker, util-linux, coreutils
 
@@ -21,10 +22,10 @@ Pulp'd aims to provide an easier way to deploy multi-container pulp. This extend
 
 %install
 install -d %{buildroot}/%{_bindir}
-install pulpd %{buildroot}/%{_bindir}
+install %{SOURCE0} %{buildroot}/%{_bindir}
 
 install -d %{buildroot}/%{_sysconfdir}
-install pulpd.conf %{buildroot}/%{_sysconfdir}
+install %{SOURCE1} %{buildroot}/%{_sysconfdir}
 
 %pre
 install -d -m 750 -o root -g root %{pulpd_data}
