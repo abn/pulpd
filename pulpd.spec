@@ -17,9 +17,6 @@ Requires:	bash, docker, util-linux, coreutils
 %description
 Pulp'd aims to provide an easier way to deploy multi-container pulp. This extends on the great work done by the pulp maintainers working on Pulp Docker Packaging.
 
-%prep
-%autosetup
-
 %install
 install -d %{buildroot}/%{_bindir}
 install %{SOURCE0} %{buildroot}/%{_bindir}
