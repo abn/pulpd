@@ -14,6 +14,7 @@ IMAGE_QPID=pulp/qpid
 IMAGE_DB=pulp/mongodb
 IMAGE_HTTPD=pulp/apache
 IMAGE_CRANE=pulp/crane-allinone
+IMAGE_ADMIN=pulp/admin-client
 
 CONTAINER_NAME_PREFIX="pulpd-"
 PULP_LOG_DIR=/var/log/pulp
@@ -198,7 +199,7 @@ function control() {
             esac ;;
         pull)
             for image in ${IMAGE_BASE} ${IMAGE_WORKER} ${IMAGE_DB} \
-                ${IMAGE_QPID} ${IMAGE_CRANE} ${IMAGE_HTTPD}; do
+                ${IMAGE_QPID} ${IMAGE_CRANE} ${IMAGE_HTTPD} ${IMAGE_ADMIN}; do
                 docker pull ${image}
             done ;;
     esac
@@ -358,6 +359,10 @@ case "$1" in
         show_envrionment ;;
     control)
         control $2 $3 ;;
+    admin)
+        docker run -it \
+            --link ${CONTAINER_NAME_PREFIX}${PULP_HOSTNAME}:${PULP_HOSTNAME} \
+            ${IMAGE_ADMIN} ;;
     pull)
         control pull ;;
     *)
