@@ -261,25 +261,28 @@ Options:
  -h, --help             Show this help message
 
 Commands:
- setup      Command to trigger initial setup and spit out boiler-plate config docker dir
+ setup      Command to trigger initial setup and spit out boiler-plate config 
+            docker dir
  start      Start all containers
  stop       Stop all containers except database and qpid
  restart    Same as executing stop followed by start
  status     Show docker ps for pulp containers
- <cmd>-<cn> Run command (start|stop|status) for container; where cn is the container name
+ <cmd>-<cn> Run command (start|stop|status|restart) for container; where cn 
+            is the container name
  shutdown   Stop everything
  show       Show pulpd environment
  control    Internal control command for advanced usage
  pull       Pull all imaged (triggers an update for any out dated images)
+ admin      Launch an admin-client container
 
 Container names:
 db, qpid, beat, resource_manager, worker<id>, pulpapi, crane
 
 The control command usage:
 
- control start <container>
- control stop <container>
- control status <container>
+ control start <container>  | start-<container>
+ control stop <container>   | stop-<container>
+ control status <container> | status-<container>
 
  If 'workers' is used all running workers will be affected. For specific worker,
  use 'worker<id>'.
@@ -351,6 +354,9 @@ case "$1" in
         control stop all ;;
     restart)
         stop && start ;;
+    restart-+([a-z]|[0-9]))
+        control stop ${1/restart-/}
+        control start ${1/restart-/} ;;
     status)
         status ;;
     status-+([a-z]|[0-9]))
